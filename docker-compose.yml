@@ -1,0 +1,48 @@
+name: mcp-gateway
+
+services:
+  # One supergateway per wrapped stdio server. They all reuse the same image
+  # (built once from ./supergateway); add more services like this one.
+  mealie-mcp:
+    build: .
+    image: mcp-supergateway:local
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - --stdio
+      - "uvx ${MEALIE_MCP_SOURCE:-git+https://github.com/rldiao/mealie-mcp-server}"
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "8000"
+      - --streamableHttpPath
+      - /mcp
+      - --stateful
+      - --sessionTimeout
+      - "600000"
+    environment:
+      MEALIE_BASE_URL: ${MEALIE_BASE_URL:?set MEALIE_BASE_URL in .env}
+      MEALIE_API_KEY: ${MEALIE_API_KEY:?set MEALIE_API_KEY in .env}
+    volumes:
+      - uv-cache:/cache
+    # No ports published: only nginx can reach this container.
+    # If Mealie runs on the Docker host (Linux), uncomment:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    depends_on:
+      - mealie-mcp
+    ports:
+      # Use "127.0.0.1:48080:48080" to restrict access to this machine.
+      - "48080:48080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/locations:/etc/nginx/locations:ro
+      - ./auth:/etc/nginx/auth:ro
+
+volumes:
+  uv-cache:
