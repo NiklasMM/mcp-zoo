@@ -39,18 +39,25 @@ services:
       context: .
       dockerfile: Dockerfile.anylist
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
-      ANYLIST_EMAIL: ${ANYLIST_EMAIL:?set ANYLIST_EMAIL in .env}
+      ANYLIST_USERNAME: ${ANYLIST_USERNAME:?set ANYLIST_USERNAME in .env}
       ANYLIST_PASSWORD: ${ANYLIST_PASSWORD:?set ANYLIST_PASSWORD in .env}
+      ANYLIST_LIST_NAME: ${ANYLIST_LIST_NAME:?set ANYLIST_LIST_NAME in .env}
     command:
       - supergateway
       - --stdio
-      - node dist/index.js
+      - "node src/server.js"
       - --outputTransport
       - streamableHttp
-      - --stateful
       - --port
       - "8000"
+      - --streamableHttpPath
+      - /mcp
+      - --stateful
+      - --sessionTimeout
+      - "600000"
 
   nginx:
     image: nginx:stable-alpine
