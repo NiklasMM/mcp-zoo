@@ -8,7 +8,7 @@ A small, private, self-hosted gateway for MCP (Model Context Protocol) servers, 
 
 - Each **stdio-based MCP server** is wrapped by [supergateway](https://github.com/supercorp-ai/supergateway) so it is reachable over **Streamable HTTP**.
 - **nginx** is the single public entry point (port `48080`). It routes by path (`/<name>`) to the matching wrapper and enforces **HTTP Basic auth, with a separate credential per wrapped server**.
-- Currently wrapped: the Mealie MCP server (`https://github.com/rldiao/mealie-mcp-server`), served at `/mealie`.
+- Currently wrapped: the Mealie MCP server (`https://github.com/rldiao/mealie-mcp-server`) at `/mealie`, and the AnyList MCP server (`https://github.com/davidashman/anylist-mcp`) at `/anylist`.
 
 This is for one person's private use. Prefer simple, auditable solutions over feature-rich ones. Do not introduce a heavy gateway or orchestration layer unless asked.
 
@@ -18,7 +18,8 @@ This is for one person's private use. Prefer simple, auditable solutions over fe
 docker-compose.yml           # one supergateway service per wrapped server, plus nginx
 .env.example                 # template for .env (secrets); .env itself is never committed
 add-auth.sh                  # creates/rotates auth/<name>.htpasswd and prints the credential once
-supergateway/Dockerfile      # shared image: node + git + uv/uvx + supergateway
+Dockerfile.<name>            # one image per wrapped server (Dockerfile.mealie, Dockerfile.anylist):
+                             # node + git + supergateway, with the wrapped server installed at build time
 nginx/nginx.conf             # main nginx config; includes nginx/locations/*.conf
 nginx/locations/<name>.conf  # one location block per wrapped server
 auth/                        # generated htpasswd files (gitignored, mounted read-only into nginx)
@@ -60,11 +61,14 @@ Expected: no credentials gives `401`; an unknown path gives `404`; valid credent
 
 Follow this checklist exactly so the conventions stay consistent:
 
-1. **Compose:** add a service named `<name>-mcp` that reuses `image: mcp-supergateway:local` (do not add a second `build:`). Set `--stdio "<command>"`, `--outputTransport streamableHttp`, `--port 8000`, `--streamableHttpPath /mcp`, plus the `--stateful` flags used by the existing service. Pass its secrets via `environment:` from `.env` using `${VAR:?message}`. Do **not** publish ports.
-2. **nginx:** copy `nginx/locations/mealie.conf` to `nginx/locations/<name>.conf`; change the location path, the htpasswd filename, and the upstream host name. Use an exact-match `location = /<name>`.
-3. **Auth:** run `bash add-auth.sh <name>` and give the printed credential to the user. Never invent, log, or commit credentials.
-4. **Env:** add any new variables to `.env.example` (placeholders only).
-5. Restart nginx, run the smoke test, and confirm 401 without credentials and that one server's credential does **not** work on another server's path.
+1. **Dockerfile:** add `Dockerfile.<name>` — `node:22-slim` + git + `npm install -g supergateway`, then install/build the wrapped server (the TypeScript anylist-mcp: clone the repo, `npm install && npm run build`). Mealie's image additionally gets uv/uvx and runs as the `node` user with `ENTRYPOINT ["supergateway"]`.
+2. **Compose:** add a service named `<name>-mcp` with `build: { context: ., dockerfile: Dockerfile.<name> }`. Set `--stdio "<command>"`, `--outputTransport streamableHttp`, `--port 8000`, `--streamableHttpPath /mcp`, plus the `--stateful` flags used by the existing services. Pass its secrets via `environment:` from `.env` using `${VAR:?message}`. Do **not** publish ports. For anylist-mcp the stdio command is `node dist/index.js` (from the app dir) and the secrets are `ANYLIST_EMAIL` / `ANYLIST_PASSWORD`.
+3. **nginx:** copy `nginx/locations/mealie.conf` to `nginx/locations/<name>.conf`; change the location path, the htpasswd filename, and the upstream host name. Use an exact-match `location = /<name>`.
+4. **Auth:** run `bash add-auth.sh <name>` and give the printed credential to the user. Never invent, log, or commit credentials.
+5. **Env:** add any new variables to `.env.example` (placeholders only).
+6. Restart nginx, run the smoke test, and confirm 401 without credentials and that one server's credential does **not** work on another server's path.
+
+Note: the existing `anylist-mcp` service predates some of these conventions (no `security_opt`, no `--streamableHttpPath`/`--sessionTimeout`, runs as root, unpinned supergateway, and `ANYLIST_MCP_REF` is declared but unused). Align it when convenient.
 
 ## Rules and constraints
 
@@ -73,26 +77,33 @@ Follow this checklist exactly so the conventions stay consistent:
 - **Keep per-server credentials separate.** One htpasswd file per server; do not share users across servers.
 - **Keep `proxy_set_header Authorization ""`** in every location block.
 - **Keep streaming settings** in location blocks (`proxy_buffering off`, `proxy_http_version 1.1`, `Connection ""`, long read timeouts). Buffering breaks MCP streaming responses.
-- **Pin versions** when asked to harden: `SUPERGATEWAY_VERSION` build arg, the `uv` image tag in the Dockerfile, and the Mealie MCP source via `MEALIE_MCP_SOURCE=git+https://...@<commit-sha>`. The wrapper container holds real API keys and exposes write-capable tools, so avoid unpinned third-party code where practical.
+- **Pin versions** when asked to harden: `SUPERGATEWAY_VERSION` build arg, the `uv` image tag in the Dockerfile, the Mealie MCP source via `MEALIE_MCP_SOURCE=git+https://...@<commit-sha>`, and the AnyList MCP source via `ANYLIST_MCP_REF` in `Dockerfile.anylist` (the arg is currently declared but unused — the clone hardcodes `main`; wire it into the clone/checkout when hardening). The wrapper container holds real API keys and exposes write-capable tools, so avoid unpinned third-party code where practical.
 - Prefer well-maintained, source-visible dependencies. A stdio-to-HTTP wrapper previously considered (`mcp-streamablehttp-proxy`) was rejected because it has had no release in over a year and its repository is gone. Check release dates and repo activity before adding any new wrapper or proxy.
 - Basic auth over plain HTTP sends credentials in clear text. If the user exposes this beyond localhost/VPN, add TLS (nginx certificate, or Caddy / Tailscale Serve in front) rather than weakening anything else.
 
+## Verified end to end (2026-10-12, against `/anylist`)
+
+- nginx per-server basic auth works: `401` without credentials, `404` on an unknown path, `200` with the correct credential.
+- `--outputTransport streamableHttp` selects Streamable HTTP output as expected: `initialize` returns an SSE (`data: {...}`) response plus an `mcp-session-id` header; follow-up requests (`notifications/initialized` → `202`, `tools/list`, `tools/call`) sent with that session id work.
+- supergateway does not reject the default `Host` header (no 403s through nginx).
+- The anylist service omits `--streamableHttpPath`, so supergateway's default path is `/mcp` — matching the nginx `proxy_pass .../mcp`.
+- `--stateful` keeps one stdio process per `mcp-session-id`; sequential `tools/call`s in one session reuse the same AnyList connection.
+- The AnyList server (davidashman/anylist-mcp, run as `node dist/index.js`) was exercised with real credentials: `get_lists`, `get_recipes`, `get_meal_plan`, and `get_list_items` all returned live account data. It reads `ANYLIST_EMAIL` / `ANYLIST_PASSWORD` from the container environment.
+
 ## Known uncertainties (verify before relying on them)
 
-These were written from documentation snippets and memory, and **the stack has not been run end to end yet**:
+These were written from documentation snippets and memory; the Mealie half of the stack has not been run end to end yet:
 
-- `--outputTransport streamableHttp` is the supergateway flag believed to select Streamable HTTP output. Confirm against `supergateway --help` for the installed version. If the wrapper container exits at start, check its logs first.
-- `--stateful` is used so one stdio process lives per session. Stateless mode may spawn a new process per request (slow with `uvx`). Not confirmed either way. Idle sessions expire after `--sessionTimeout` (10 minutes); clients should re-initialize.
+- Stateless mode (without `--stateful`) may spawn a new stdio process per request (slow with `uvx`). Not confirmed either way. Idle sessions expire after `--sessionTimeout` (10 minutes); clients should re-initialize.
 - The Mealie process is expected to inherit `MEALIE_BASE_URL` and `MEALIE_API_KEY` from the container environment. Confirm with a `tools/call` that returns real Mealie data.
 - The Mealie server's tool names and startup command (`uvx git+https://github.com/rldiao/mealie-mcp-server`) come from its README; check the README again if startup fails.
 - nginx is expected to re-read `auth/*.htpasswd` on each request, so credential rotation should not need a reload. Confirm.
-- Whether supergateway rejects unexpected `Host` headers. The nginx config does not override `Host`, so the default (the upstream's own host:port) is used. If you see 403s from the wrapper, investigate this.
 
 When you resolve one of these, update this section to say what was verified and how.
 
 ## Possible next steps
 
-- Run the stack end to end and record the verified behavior above.
+- Run the Mealie half of the stack end to end and record the verified behavior above (the AnyList half is verified — see above).
 - Add the pinning described under Rules.
 - Add TLS if remote access is needed.
 - Add `limit_req` (or fail2ban) for failed-login throttling if the port is exposed beyond a trusted network.

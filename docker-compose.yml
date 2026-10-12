@@ -4,7 +4,10 @@ services:
   # One supergateway per wrapped stdio server. They all reuse the same image
   # (built once from ./supergateway); add more services like this one.
   mealie-mcp:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.mealie
+
     image: mcp-supergateway:local
     restart: unless-stopped
     security_opt:
@@ -30,6 +33,24 @@ services:
     # If Mealie runs on the Docker host (Linux), uncomment:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
+
+  anylist-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.anylist
+    restart: unless-stopped
+    environment:
+      ANYLIST_EMAIL: ${ANYLIST_EMAIL:?set ANYLIST_EMAIL in .env}
+      ANYLIST_PASSWORD: ${ANYLIST_PASSWORD:?set ANYLIST_PASSWORD in .env}
+    command:
+      - supergateway
+      - --stdio
+      - node dist/index.js
+      - --outputTransport
+      - streamableHttp
+      - --stateful
+      - --port
+      - "8000"
 
   nginx:
     image: nginx:stable-alpine

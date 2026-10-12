@@ -2,7 +2,7 @@
 
 A small, private, self-hosted gateway for [MCP](https://modelcontextprotocol.io) (Model Context Protocol) servers. Each stdio-based MCP server is wrapped by [supergateway](https://github.com/supercorp-ai/supergateway) and exposed over Streamable HTTP, with **nginx** as the single entry point enforcing per-server HTTP Basic auth.
 
-Currently wrapped: the [Mealie MCP server](https://github.com/rldiao/mealie-mcp-server) at `/mealie`.
+Currently wrapped: the [Mealie MCP server](https://github.com/rldiao/mealie-mcp-server) at `/mealie` and the [AnyList MCP server](https://github.com/davidashman/anylist-mcp) at `/anylist`.
 
 ## Architecture
 
@@ -20,6 +20,7 @@ client ──(Basic auth)──▶ nginx:48080/<name> ──▶ <name>-mcp:8000/
 - Docker with Compose plugin
 - A running [Mealie](https://github.com/mealie-recipes/mealie) instance (or another MCP server you want to wrap)
 - Mealie API token (Settings → API Tokens in Mealie)
+- An [AnyList](https://www.anylist.com/) account (email + password)
 
 ## Quick start
 
@@ -27,7 +28,7 @@ client ──(Basic auth)──▶ nginx:48080/<name> ──▶ <name>-mcp:8000/
 
    ```bash
    cp .env.example .env
-   # Edit .env and set MEALIE_BASE_URL and MEALIE_API_KEY
+   # Edit .env and set MEALIE_BASE_URL, MEALIE_API_KEY, ANYLIST_EMAIL, ANYLIST_PASSWORD
    ```
 
 2. **Create a gateway credential**
@@ -60,7 +61,8 @@ client ──(Basic auth)──▶ nginx:48080/<name> ──▶ <name>-mcp:8000/
 Point your MCP client at:
 
 ```
-URL:      http://<host>:48080/mealie
+URL:      http://<host>:48080/mealie     # Mealie
+          http://<host>:48080/anylist   # AnyList
 Auth:     HTTP Basic (username + password from add-auth.sh)
 ```
 
@@ -80,6 +82,8 @@ Accept: application/json, text/event-stream
 | `MEALIE_BASE_URL` | Yes | Base URL of your Mealie instance (e.g. `https://mealie.example.com`) |
 | `MEALIE_API_KEY` | Yes | Mealie API token |
 | `MEALIE_MCP_SOURCE` | No | Pin the Mealie MCP server to a specific commit: `git+https://github.com/rldiao/mealie-mcp-server@<sha>` |
+| `ANYLIST_EMAIL` | Yes | AnyList account email |
+| `ANYLIST_PASSWORD` | Yes | AnyList account password |
 
 ### Restricting to localhost
 
@@ -92,11 +96,15 @@ ports:
 
 ## Adding a new MCP server
 
-1. **Compose** — add a `<name>-mcp` service to `docker-compose.yml` reusing `image: mcp-supergateway:local`:
+1. **Dockerfile** — add `Dockerfile.<name>`: `node:22-slim` + git + `npm install -g supergateway`, then install/build the wrapped server (for the TypeScript AnyList server: clone the repo, `npm install && npm run build`).
+
+2. **Compose** — add a `<name>-mcp` service to `docker-compose.yml`:
 
    ```yaml
    <name>-mcp:
-     image: mcp-supergateway:local
+     build:
+       context: .
+       dockerfile: Dockerfile.<name>
      restart: unless-stopped
      security_opt:
        - no-new-privileges:true
@@ -117,20 +125,22 @@ ports:
      # No ports published.
    ```
 
-2. **nginx** — copy `mealie.conf` to `nginx/locations/<name>.conf` (or the `nginx/locations/` dir if it exists), and update:
+   If the Dockerfile has no `ENTRYPOINT`, prefix the command with `supergateway`. For the AnyList server ([davidashman/anylist-mcp](https://github.com/davidashman/anylist-mcp)) the stdio command is `node dist/index.js` and the secrets are `ANYLIST_EMAIL` / `ANYLIST_PASSWORD`. The existing `anylist-mcp` service predates some of these conventions (no `security_opt`, no `--streamableHttpPath`/`--sessionTimeout`, runs as root) — align it when convenient.
+
+3. **nginx** — copy `nginx/locations/mealie.conf` to `nginx/locations/<name>.conf`, and update:
    - `location = /<name>`
    - `auth_basic_user_file /etc/nginx/auth/<name>.htpasswd`
    - `set $upstream "<name>-mcp:8000"`
 
-3. **Auth** — create the credential:
+4. **Auth** — create the credential:
 
    ```bash
    bash add-auth.sh <name>
    ```
 
-4. **Env** — add any new variables to `.env.example` (placeholders only).
+5. **Env** — add any new variables to `.env.example` (placeholders only).
 
-5. **Restart and verify**:
+6. **Restart and verify**:
 
    ```bash
    docker compose up -d
@@ -154,7 +164,7 @@ bash add-auth.sh <name> [user]      # create or rotate a credential (prints it o
 - **Basic auth over plain HTTP** sends credentials in clear text. Keep this on localhost or a trusted VPN. For remote access, add TLS (nginx certificate, or put Caddy / Tailscale Serve in front).
 - **Never commit** `.env` or `auth/` — both are gitignored.
 - **One credential per server** — don't share htpasswd files across servers.
-- Wrapper containers run with `no-new-privileges` and publish no ports.
+- Wrapper containers publish no ports. `no-new-privileges` is set on the Mealie wrapper; the AnyList wrapper does not set it yet.
 - nginx strips the `Authorization` header before proxying to the wrapped server.
 
 ## Troubleshooting
@@ -166,6 +176,7 @@ bash add-auth.sh <name> [user]      # create or rotate a credential (prints it o
 | `502 Bad Gateway` | Wrapper container is down or crashing. Check `docker compose logs -f <name>-mcp`. |
 | Wrapper exits at start | Check `supergateway --help` flags; verify the stdio command runs. |
 | No data from Mealie | Verify `MEALIE_BASE_URL` and `MEALIE_API_KEY` in `.env`; check wrapper logs. |
+| No data from AnyList | Verify `ANYLIST_EMAIL` and `ANYLIST_PASSWORD` in `.env`; check wrapper logs (`docker compose logs -f anylist-mcp`). |
 | nginx won't start | Run `docker compose exec nginx nginx -t` to validate config. |
 
 ## Project layout
@@ -174,9 +185,9 @@ bash add-auth.sh <name> [user]      # create or rotate a credential (prints it o
 docker-compose.yml           # one supergateway service per wrapped server, plus nginx
 .env.example                 # template for .env (secrets); .env itself is never committed
 add-auth.sh                  # creates/rotates auth/<name>.htpasswd and prints the credential once
-Dockerfile                   # shared image: node + git + uv/uvx + supergateway
-nginx.conf                   # main nginx config (at repo root or nginx/)
-mealie.conf                  # nginx location block for the Mealie server (or nginx/locations/)
+Dockerfile.<name>            # one image per wrapped server (Dockerfile.mealie, Dockerfile.anylist)
+nginx/nginx.conf             # main nginx config; includes nginx/locations/*.conf
+nginx/locations/<name>.conf  # one location block per wrapped server
 auth/                        # generated htpasswd files (gitignored, mounted read-only into nginx)
 AGENTS.md                    # guidance for AI coding agents working in this repo
 ```
@@ -187,3 +198,5 @@ Private use. See individual upstream projects for their licenses:
 - [supergateway](https://github.com/supercorp-ai/supergateway)
 - [mealie-mcp-server](https://github.com/rldiao/mealie-mcp-server)
 - [Mealie](https://github.com/mealie-recipes/mealie)
+- [anylist-mcp](https://github.com/davidashman/anylist-mcp)
+- [AnyList](https://www.anylist.com/)
