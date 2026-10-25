@@ -2,7 +2,7 @@
 
 A small, private, self-hosted gateway for [MCP](https://modelcontextprotocol.io) (Model Context Protocol) servers. Each stdio-based MCP server is wrapped by [supergateway](https://github.com/supercorp-ai/supergateway) and exposed over Streamable HTTP, with **nginx** as the single entry point enforcing per-server token auth via the `X-MCP-PROXY-PASS` header (the deployment environment strips `Authorization` headers, so HTTP Basic auth cannot be used).
 
-Currently wrapped: the [Mealie MCP server](https://github.com/rldiao/mealie-mcp-server) at `/mealie` and the [AnyList MCP server](https://github.com/davidashman/anylist-mcp) at `/anylist`.
+Currently wrapped: the [Mealie MCP server](https://github.com/rldiao/mealie-mcp-server) at `/mealie`, the [AnyList MCP server](https://github.com/bobby060/anylist-mcp) at `/anylist`, and the [Gitea MCP server](https://gitea.com/gitea/gitea-mcp) at `/gitea`.
 
 ## Architecture
 
@@ -21,6 +21,7 @@ client ──(X-MCP-PROXY-PASS: <token>)──▶ nginx:48080/<name> ──▶ <
 - A running [Mealie](https://github.com/mealie-recipes/mealie) instance (or another MCP server you want to wrap)
 - Mealie API token (Settings → API Tokens in Mealie)
 - An [AnyList](https://www.anylist.com/) account (email + password)
+- A [Gitea](https://about.gitea.com) instance (gitea.com or self-hosted) and a personal access token (Settings → Applications → Generate New Token)
 
 ## Quick start
 
@@ -28,7 +29,7 @@ client ──(X-MCP-PROXY-PASS: <token>)──▶ nginx:48080/<name> ──▶ <
 
    ```bash
    cp .env.example .env
-   # Edit .env and set MEALIE_BASE_URL, MEALIE_API_KEY, ANYLIST_EMAIL, ANYLIST_PASSWORD
+   # Edit .env and set MEALIE_BASE_URL, MEALIE_API_KEY, ANYLIST_USERNAME, ANYLIST_PASSWORD, GITEA_HOST, GITEA_ACCESS_TOKEN
    ```
 
 2. **Create a gateway token**
@@ -63,6 +64,7 @@ Point your MCP client at:
 ```
 URL:      http://<host>:48080/mealie     # Mealie
           http://<host>:48080/anylist   # AnyList
+          http://<host>:48080/gitea     # Gitea
 Header:   X-MCP-PROXY-PASS: <token from add-auth.sh>
 ```
 
@@ -82,8 +84,14 @@ Accept: application/json, text/event-stream
 | `MEALIE_BASE_URL` | Yes | Base URL of your Mealie instance (e.g. `https://mealie.example.com`) |
 | `MEALIE_API_KEY` | Yes | Mealie API token |
 | `MEALIE_MCP_SOURCE` | No | Pin the Mealie MCP server to a specific commit: `git+https://github.com/rldiao/mealie-mcp-server@<sha>` |
-| `ANYLIST_EMAIL` | Yes | AnyList account email |
+| `ANYLIST_USERNAME` | Yes | AnyList account email |
 | `ANYLIST_PASSWORD` | Yes | AnyList account password |
+| `ANYLIST_LIST_NAME` | Yes | Default shopping list for calls that omit `list_name` |
+| `GITEA_HOST` | Yes | Gitea instance URL (e.g. `https://gitea.com` or self-hosted) |
+| `GITEA_ACCESS_TOKEN` | Yes | Gitea personal access token (Settings → Applications → Generate New Token) |
+| `GITEA_READONLY` | No | Set to `true` to hide write tools (create/update/delete) |
+| `GITEA_SCOPES` | No | Comma-separated tool scopes to expose (e.g. `issue,pull_request,repository`) |
+| `GITEA_TOOLS` | No | Comma-separated individual tool names to expose |
 
 ### Restricting to localhost
 
@@ -179,7 +187,8 @@ bash add-auth.sh <name> [--add]     # create or rotate a token (prints the heade
 | `502 Bad Gateway` | Wrapper container is down or crashing. Check `docker compose logs -f <name>-mcp`. |
 | Wrapper exits at start | Check `supergateway --help` flags; verify the stdio command runs. |
 | No data from Mealie | Verify `MEALIE_BASE_URL` and `MEALIE_API_KEY` in `.env`; check wrapper logs. |
-| No data from AnyList | Verify `ANYLIST_EMAIL` and `ANYLIST_PASSWORD` in `.env`; check wrapper logs (`docker compose logs -f anylist-mcp`). |
+| No data from AnyList | Verify `ANYLIST_USERNAME` and `ANYLIST_PASSWORD` in `.env`; check wrapper logs (`docker compose logs -f anylist-mcp`). |
+| No data from Gitea | Verify `GITEA_HOST` and `GITEA_ACCESS_TOKEN` in `.env`; check wrapper logs (`docker compose logs -f gitea-mcp`). Token needs at least read access to the repos you query. |
 | nginx won't start | Run `docker compose exec nginx nginx -t` to validate config. |
 
 ## Project layout
@@ -188,7 +197,7 @@ bash add-auth.sh <name> [--add]     # create or rotate a token (prints the heade
 docker-compose.yml           # one supergateway service per wrapped server, plus nginx
 .env.example                 # template for .env (secrets); .env itself is never committed
 add-auth.sh                  # creates/rotates auth/<name>.tokens and prints the X-MCP-PROXY-PASS header once
-Dockerfile.<name>            # one image per wrapped server (Dockerfile.mealie, Dockerfile.anylist)
+Dockerfile.<name>            # one image per wrapped server (Dockerfile.mealie, Dockerfile.anylist, Dockerfile.gitea)
 nginx/nginx.conf             # main nginx config; includes nginx/locations/*.conf
 nginx/locations/<name>.conf  # one location block per wrapped server
 auth/                        # generated token files (gitignored, mounted read-only into nginx)
@@ -201,5 +210,7 @@ Private use. See individual upstream projects for their licenses:
 - [supergateway](https://github.com/supercorp-ai/supergateway)
 - [mealie-mcp-server](https://github.com/rldiao/mealie-mcp-server)
 - [Mealie](https://github.com/mealie-recipes/mealie)
-- [anylist-mcp](https://github.com/davidashman/anylist-mcp)
+- [anylist-mcp](https://github.com/bobby060/anylist-mcp)
 - [AnyList](https://www.anylist.com/)
+- [gitea-mcp](https://gitea.com/gitea/gitea-mcp)
+- [Gitea](https://about.gitea.com)

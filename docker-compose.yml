@@ -59,6 +59,40 @@ services:
       - --sessionTimeout
       - "600000"
 
+  gitea-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.gitea
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # Any Gitea instance works: https://gitea.com, a self-hosted instance, etc.
+      GITEA_HOST: ${GITEA_HOST:?set GITEA_HOST in .env}
+      GITEA_ACCESS_TOKEN: ${GITEA_ACCESS_TOKEN:?set GITEA_ACCESS_TOKEN in .env}
+      # Optional: hide write tools (create/update/delete) from the agent
+      GITEA_READONLY: ${GITEA_READONLY:-}
+      # Optional: comma-separated tool scopes (e.g. "issue,pull_request,repository")
+      GITEA_SCOPES: ${GITEA_SCOPES:-}
+      # Optional: comma-separated individual tool names to expose
+      GITEA_TOOLS: ${GITEA_TOOLS:-}
+    command:
+      - --stdio
+      - "gitea-mcp -t stdio"
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "8000"
+      - --streamableHttpPath
+      - /mcp
+      - --stateful
+      - --sessionTimeout
+      - "600000"
+    # No ports published: only nginx can reach this container.
+    # If Gitea runs on the Docker host (Linux), uncomment:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
   nginx:
     image: nginx:stable-alpine
     restart: unless-stopped

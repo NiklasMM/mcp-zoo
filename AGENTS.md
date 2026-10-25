@@ -8,7 +8,7 @@ A small, private, self-hosted gateway for MCP (Model Context Protocol) servers, 
 
 - Each **stdio-based MCP server** is wrapped by [supergateway](https://github.com/supercorp-ai/supergateway) so it is reachable over **Streamable HTTP**.
 - **nginx** is the single public entry point (port `48080`). It routes by path (`/<name>`) to the matching wrapper and enforces **token auth via the `X-MCP-PROXY-PASS` header, with a separate token per wrapped server** (the deployment environment strips `Authorization` headers, so HTTP Basic auth cannot be used).
-- Currently wrapped: the Mealie MCP server (`https://github.com/rldiao/mealie-mcp-server`) at `/mealie`, and the AnyList MCP server (`https://github.com/bobby060/anylist-mcp`) at `/anylist`.
+- Currently wrapped: the Mealie MCP server (`https://github.com/rldiao/mealie-mcp-server`) at `/mealie`, the AnyList MCP server (`https://github.com/bobby060/anylist-mcp`) at `/anylist`, and the Gitea MCP server (`https://gitea.com/gitea/gitea-mcp`) at `/gitea`.
 
 This is for one person's private use. Prefer simple, auditable solutions over feature-rich ones. Do not introduce a heavy gateway or orchestration layer unless asked.
 
@@ -18,8 +18,10 @@ This is for one person's private use. Prefer simple, auditable solutions over fe
 docker-compose.yml           # one supergateway service per wrapped server, plus nginx
 .env.example                 # template for .env (secrets); .env itself is never committed
 add-auth.sh                  # creates/rotates auth/<name>.tokens and prints the X-MCP-PROXY-PASS header once
-Dockerfile.<name>            # one image per wrapped server (Dockerfile.mealie, Dockerfile.anylist):
-                             # node + git + supergateway, with the wrapped server installed at build time
+Dockerfile.<name>            # one image per wrapped server:
+                             # mealie: node + uv/uvx, runs as node user, ENTRYPOINT supergateway
+                             # anylist: node + git + build tools, clones and npm ci's the wrapped server
+                             # gitea: multi-stage (golang:1.27-alpine builds gitea-mcp, node:22-slim runtime + supergateway)
 nginx/nginx.conf             # main nginx config; includes nginx/locations/*.conf
 nginx/locations/<name>.conf  # one location block per wrapped server
 auth/                        # generated token files (gitignored, mounted read-only into nginx)
@@ -69,6 +71,8 @@ Follow this checklist exactly so the conventions stay consistent:
 6. Reload nginx, run the smoke test, and confirm 401 without a token and that one server's token does **not** work on another server's path.
 
 Note: the `anylist-mcp` service was aligned with these conventions on 2026-10-12 while swapping in bobby060/anylist-mcp (`security_opt`, `--streamableHttpPath`/`--sessionTimeout`, non-root `node` user, supergateway pinned to 4.1.0, `ANYLIST_MCP_REF` wired into the clone/checkout and pinned by default).
+
+Note: the `gitea-mcp` service was added on 2026-10-25 wrapping [gitea.com/gitea/gitea-mcp](https://gitea.com/gitea/gitea-mcp). It uses a multi-stage Dockerfile (`golang:1.27-alpine` builds the static binary, `node:22-slim` runtime with supergateway pinned to 4.1.0, runs as `node` user, `ENTRYPOINT ["supergateway"]`). The stdio command is `gitea-mcp -t stdio`; the server reads `GITEA_HOST` and `GITEA_ACCESS_TOKEN` from the container environment, plus optional `GITEA_READONLY` / `GITEA_SCOPES` / `GITEA_TOOLS`. The wrapped source is pinned via `GITEA_MCP_REF` (defaults to the v1.11.0 commit `21f40d77`). The Gitea instance is fully configurable via `GITEA_HOST` — point it at gitea.com, a self-hosted instance, etc.
 
 ## Rules and constraints
 
