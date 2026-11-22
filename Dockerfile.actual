@@ -1,0 +1,30 @@
+FROM node:22-slim
+
+# ca-certificates for HTTPS to the Actual server; python3/make/g++ as a
+# fallback build toolchain for native npm modules (@actual-app/api pulls in
+# better-sqlite3, which ships prebuilds)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+
+# Pin with: docker compose build --build-arg SUPERGATEWAY_VERSION=x.y.z
+ARG SUPERGATEWAY_VERSION=4.1.0
+RUN npm install -g supergateway@${SUPERGATEWAY_VERSION}
+
+# Pin the wrapped server to a specific npm version; override at build time to track latest:
+#   docker compose build --build-arg ACTUAL_MCP_VERSION=latest actual-mcp
+ARG ACTUAL_MCP_VERSION=1.15.1
+RUN npm install -g actual-mcp@${ACTUAL_MCP_VERSION}
+
+# Writable dir for the local budget copy (@actual-app/api downloads the budget
+# into ACTUAL_DATA_DIR); mounted as a named volume in docker-compose.yml
+ENV ACTUAL_DATA_DIR=/data
+RUN mkdir -p /data && chown node:node /data
+
+# Node server reading its config from the environment (ACTUAL_SERVER_URL,
+# ACTUAL_PASSWORD, ACTUAL_BUDGET_SYNC_ID) and talking to the Actual server
+# over HTTP(S). Run without --enable-write to keep the toolset read-only.
+USER node
+
+EXPOSE 8000
+ENTRYPOINT ["supergateway"]

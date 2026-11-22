@@ -93,6 +93,45 @@ services:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
 
+  actual-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.actual
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # URL of the Actual Budget server as seen from inside the Docker network
+      # (LAN IP, container name on a shared network, or host.docker.internal
+      # with extra_hosts below). Include the scheme, e.g. http://actual.lan:5006
+      ACTUAL_SERVER_URL: ${ACTUAL_SERVER_URL:?set ACTUAL_SERVER_URL in .env}
+      ACTUAL_PASSWORD: ${ACTUAL_PASSWORD:?set ACTUAL_PASSWORD in .env}
+      # Optional: Settings -> Show advanced settings -> Sync ID in Actual.
+      # When unset the server falls back to the first budget on the server.
+      ACTUAL_BUDGET_SYNC_ID: ${ACTUAL_BUDGET_SYNC_ID:-}
+      # Optional: only needed for end-to-end encrypted budget files
+      # ACTUAL_BUDGET_ENCRYPTION_PASSWORD: ${ACTUAL_BUDGET_ENCRYPTION_PASSWORD:-}
+    command:
+      - --stdio
+      # No --enable-write: the wrapped server stays read-only
+      - "actual-mcp"
+      - --outputTransport
+      - streamableHttp
+      - --port
+      - "8000"
+      - --streamableHttpPath
+      - /mcp
+      - --stateful
+      - --sessionTimeout
+      - "600000"
+    volumes:
+      # Local copy of the budget downloaded by @actual-app/api (ACTUAL_DATA_DIR)
+      - actual-data:/data
+    # No ports published: only nginx can reach this container.
+    # If Actual runs on the Docker host (Linux), uncomment:
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
   nginx:
     image: nginx:stable-alpine
     restart: unless-stopped
@@ -108,3 +147,4 @@ services:
 
 volumes:
   uv-cache:
+  actual-data:

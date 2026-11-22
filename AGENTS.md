@@ -8,7 +8,7 @@ A small, private, self-hosted gateway for MCP (Model Context Protocol) servers, 
 
 - Each **stdio-based MCP server** is wrapped by [supergateway](https://github.com/supercorp-ai/supergateway) so it is reachable over **Streamable HTTP**.
 - **nginx** is the single public entry point (port `48080`). It routes by path (`/<name>`) to the matching wrapper and enforces **token auth via the `X-MCP-PROXY-PASS` header, with a separate token per wrapped server** (the deployment environment strips `Authorization` headers, so HTTP Basic auth cannot be used).
-- Currently wrapped: the Mealie MCP server (`https://github.com/rldiao/mealie-mcp-server`) at `/mealie`, the AnyList MCP server (`https://github.com/bobby060/anylist-mcp`) at `/anylist`, and the Gitea MCP server (`https://gitea.com/gitea/gitea-mcp`) at `/gitea`.
+- Currently wrapped: the Mealie MCP server (`https://github.com/rldiao/mealie-mcp-server`) at `/mealie`, the AnyList MCP server (`https://github.com/bobby060/anylist-mcp`) at `/anylist`, the Gitea MCP server (`https://gitea.com/gitea/gitea-mcp`) at `/gitea`, and the Actual Budget MCP server (`https://github.com/s-stefanov/actual-mcp`) at `/actual`.
 
 This is for one person's private use. Prefer simple, auditable solutions over feature-rich ones. Do not introduce a heavy gateway or orchestration layer unless asked.
 
@@ -73,6 +73,8 @@ Follow this checklist exactly so the conventions stay consistent:
 Note: the `anylist-mcp` service was aligned with these conventions on 2026-10-12 while swapping in bobby060/anylist-mcp (`security_opt`, `--streamableHttpPath`/`--sessionTimeout`, non-root `node` user, supergateway pinned to 4.1.0, `ANYLIST_MCP_REF` wired into the clone/checkout and pinned by default).
 
 Note: the `gitea-mcp` service was added on 2026-10-25 wrapping [gitea.com/gitea/gitea-mcp](https://gitea.com/gitea/gitea-mcp). It uses a multi-stage Dockerfile (`golang:1.27-alpine` builds the static binary, `node:22-slim` runtime with supergateway pinned to 4.1.0, runs as `node` user, `ENTRYPOINT ["supergateway"]`). The stdio command is `gitea-mcp -t stdio`; the server reads `GITEA_HOST` and `GITEA_ACCESS_TOKEN` from the container environment, plus optional `GITEA_READONLY` / `GITEA_SCOPES` / `GITEA_TOOLS`. The wrapped source is pinned via `GITEA_MCP_REF` (defaults to the v1.11.0 commit `21f40d77`). The Gitea instance is fully configurable via `GITEA_HOST` — point it at gitea.com, a self-hosted instance, etc.
+
+Note: the `actual-mcp` service was added on 2026-11-22 wrapping [s-stefanov/actual-mcp](https://github.com/s-stefanov/actual-mcp) (`npm i -g actual-mcp`, pinned via `ACTUAL_MCP_VERSION=1.15.1` by default, supergateway pinned to 4.1.0, non-root `node` user, `ENTRYPOINT ["supergateway"]`, stdio command `actual-mcp`). It is wrapped **read-only**: no `--enable-write` flag, so write tools (create/update/delete) are never registered. It reads `ACTUAL_SERVER_URL` (scheme required, as seen from inside the Docker network), `ACTUAL_PASSWORD`, and optional `ACTUAL_BUDGET_SYNC_ID` / `ACTUAL_BUDGET_ENCRYPTION_PASSWORD` from the container environment; `@actual-app/api` downloads a local copy of the budget into `ACTUAL_DATA_DIR=/data`, which is a named volume (`actual-data`). The Actual connection is lazy — it is opened on the first tool call, not at process start, so `initialize`/`tools/list` work even before the budget is reachable. If Actual runs on the Docker host, enable `extra_hosts: host.docker.internal:host-gateway` on the service and use `http://host.docker.internal:5006`.
 
 ## Rules and constraints
 
